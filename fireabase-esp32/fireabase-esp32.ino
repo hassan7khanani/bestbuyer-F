@@ -15,7 +15,8 @@ const char* mqtt_server = "broker.emqx.io";
 #define FIREBASE_HOST "espledonoff-default-rtdb.firebaseio.com"
 #define FIREBASE_AUTH "ZnIORSB3cOXMVmPFZiQdBkSMsNgwhNhsvaKhM0QU"
 
-
+char devices;
+int i= 0;
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
@@ -26,27 +27,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define LOGO_HEIGHT   16
 #define LOGO_WIDTH    16
 
-bool deviceregistration=false;
+bool deviceregistration=false,registration_status=false,display_screen=false;
 String comment;
-
-// static const unsigned char PROGMEM logo_bmp[] =
-// { 0b00000000, 0b11000000,
-//   0b00000001, 0b11000000,
-//   0b00000001, 0b11000000,
-//   0b00000011, 0b11100000,
-//   0b11110011, 0b11100000,
-//   0b11111110, 0b11111000,
-//   0b01111110, 0b11111111,
-//   0b00110011, 0b10011111,
-//   0b00011111, 0b11111100,
-//   0b00001101, 0b01110000,
-//   0b00011011, 0b10100000,
-//   0b00111111, 0b11100000,
-//   0b00111111, 0b11110000,
-//   0b01111100, 0b11110000,
-//   0b01110000, 0b01110000,
-//   0b00000000, 0b00110000 };
-
+int xaxis=0,yaxis=0;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -63,11 +46,13 @@ String jsonData;
 DynamicJsonDocument doc(1024);
 DeserializationError error = deserializeJson(doc, jsonData);
 
-JsonArray devices_details = doc.to<JsonArray>();
 String firebasePath;
-
 FirebaseData firebaseData;
 FirebaseJson json;
+
+void displayonscreen(String comment,int xaxis,int yaxis);
+void callback(char* topic, byte* message, unsigned int length) ;
+void reconnect();
 
 void setup() {
   Serial.begin(115200);
@@ -81,23 +66,22 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi...");
-    displayonscreen("Connecting to Wifi");
-
-
+    displayonscreen("Connecting to Wifi",0,1);
   }
     Serial.println("Connected to WiFi");
-    displayonscreen("Connected to WiFi");
+    displayonscreen("Connected to WiFi",0,1);
     Serial.println(WiFi.macAddress());
     macAddress = WiFi.macAddress();
     result=a+macAddress.substring(0,10);
 
-    displayonscreen("Connecting to MQTT");
+    displayonscreen("Connecting to MQTT",0,1);
     Serial.println("Connecting to MQTT");
     client.setServer(mqtt_server, 1883);
     client.setCallback(callback);
     Serial.println("MQTT Connected");
-    displayonscreen("Connected to MQTT");
-    
+    displayonscreen("Connected to MQTT",0,1);
+    client.publish("test","message");
+
 
     Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
     Serial.printf("Get string... %s\n", Firebase.getString(firebaseData, F("/Devices/macaddress/")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str());
@@ -110,45 +94,67 @@ void setup() {
         Serial.println(error.c_str());
         return;
     }
+
     for (JsonPair kv : doc.as<JsonObject>()) {
         String key = kv.key().c_str();
         String value = kv.value().as<String>();
-        
+        i=i+1;
         Serial.print("Key: ");
         Serial.print(key);
         Serial.print(" Value: ");
         Serial.println(value);
+        // devices[i]=value;
         if (value == macAddress) {
         Serial.print("Match found! Key: ");
         Serial.println(key);
         matchFound = true;
-        displayonscreen("Device already registered");
+        displayonscreen("Device already registered",0,1);
         deviceregistration=true;
+        registration_status=true;
         break;
         }
-    }
-      displayonscreen("Register device on App");
-      displayonscreen("mac: "+macAddress);
-      Serial.println("mac: "+ macAddress );
+        String modifiedJsonData;
+        serializeJson(doc, modifiedJsonData);
+        Serial.println("Modified JSON data:");
+        Serial.println(modifiedJsonData);
 
-  if (!matchFound and deviceregistration==true) {
+    }
+}
+
+void loop() {
+   Serial.print("registration_status:  ");
+   Serial.println(registration_status);
+   Serial.print("deviceregistration:   ");
+   Serial.println(deviceregistration);
+   Serial.print("matchFound:   ");
+   Serial.println(matchFound);
+
+   if (!registration_status)
+   {
+    Serial.println("In registration_status condition");
+
+    if (!display_screen)
+    {
+    Serial.println("In display screen condition");
+    displayonscreen("mac"+macAddress,0,1);
+    display_screen=true;
+    }
+   
+    Serial.println("In registration if condition @@@@@@@@");
+    if (!matchFound and deviceregistration==true) {
     
     doc[result] = macAddress;
     Serial.println("No match found. Added value with key 'new_device'.");
     firebasePath = "/Devices/macaddress/" + result;
     Serial.printf("Set string... %s\n", Firebase.setString(firebaseData, firebasePath, macAddress) ? "ok" : firebaseData.errorReason().c_str());
-    displayonscreen("Device Registered Successfully");
+    displayonscreen("Device Registered Successfully",0,1);
     deviceregistration=false;
-
+    registration_status=true;
   }
-  String modifiedJsonData;
-  serializeJson(doc, modifiedJsonData);
 
-  Serial.println("Modified JSON data:");
-  Serial.println(modifiedJsonData);
-}
+   }
 
-void loop() {
+
 
 
   if (!client.connected()) {
@@ -156,7 +162,7 @@ void loop() {
   }
   client.loop();
 
-
+  delay(2000);
 
 }
 void reconnect() {
@@ -169,6 +175,12 @@ void reconnect() {
   while (!client.connected()) {
     if (client.connect(cbuff)) {
       Serial.println("MQTT Connected");
+      client.subscribe("DEVICEONBOARDING");
+      String topic1;
+      topic1="DEVICEONBOARDING/"+macAddress;
+      client.subscribe(topic1.c_str());
+
+      client.subscribe("set");
     } else {
       Serial.print("failed to connect with MQTT with state ");
       Serial.print(client.state());
@@ -198,19 +210,20 @@ void callback(char* topic, byte* message, unsigned int length)
     Serial.println(error.c_str());
     return;
   }
-if (String(topic) == "DEVICEONBOARDING" ) 
+if (String(topic) == "DEVICEONBOARDING/"+macAddress ) 
 {
-   Serial.println("message received on topic: DEVICEONBOARDING ");
+   Serial.println("message received on topic: DEVICEONBOARDING/"+macAddress);
    deviceregistration=doc1["registered"];
+   
   
 }
 }
 
-void displayonscreen(String comment)
+void displayonscreen(String comment,int xaxis,int yaxis)
 {
       display.setTextSize(1);
       display.setTextColor(WHITE);
-      display.setCursor(0, 5);
+      display.setCursor(xaxis, yaxis);
       display.println(comment);
       display.display();
       delay(2000);
