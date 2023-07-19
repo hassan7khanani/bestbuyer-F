@@ -77,6 +77,8 @@ bool matchFound = false;
 
 String jsonData;
 DynamicJsonDocument doc(1024);
+DynamicJsonDocument doc1(1024);
+
 DeserializationError error = deserializeJson(doc, jsonData);
 String firebasePath;
 
@@ -89,7 +91,7 @@ unsigned long prevTime = 0;            //Previous time button was pressed
 // unsigned long currentTime;
 // int lastCount;
 
-
+void publish_on_app();
 void reconnect();
 // void displayonscreen(String comment,int xaxis,int yaxis);
 void callback(char* topic, byte* message, unsigned int length) ;
@@ -171,15 +173,15 @@ int light,i=0;                        //Holds mapping value 0-8
 Adafruit_AHTX0 aht;
 
 int fahrenheit;
-
+int humid;
 void setup() {
   // put your setup code here, to run once:
 
   Serial.begin(115200);
     WiFiManager wm;
     bool res;
-    // res = wm.autoConnect(); // auto generated AP name from chipid
-    // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+    displayonscreen("Connecting to Wifi",0,1);
+
     res = wm.autoConnect("AutoConnectAP","password"); // password protected ap
     if(!res) {
         Serial.println("Failed to connect");
@@ -188,6 +190,8 @@ void setup() {
     else {
         //if you get here you have connected to the WiFi    
         Serial.println("connected...yeey :)");
+        displayonscreen("Connected to WiFi",0,1);
+
     }
 
   // WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -197,18 +201,18 @@ void setup() {
   //   // displayonscreen("Connecting to Wifi",0,1);
   // }
     Serial.println("Connected to WiFi");
-    // displayonscreen("Connected to WiFi",0,1);
+    displayonscreen("Connected to WiFi",0,1);
     Serial.println(WiFi.macAddress());
     macAddress = WiFi.macAddress();
     result=a+macAddress.substring(0,10);
 
-    // displayonscreen("Connecting to MQTT",0,1);
+    displayonscreen("Connecting to MQTT",0,1);
     Serial.println("Connecting to MQTT");
     client.setServer(mqtt_server, 1883);
     client.setCallback(callback);
     Serial.println("MQTT Connected");
-    // displayonscreen("Connected to MQTT",0,1);
-    client.publish("test","message");
+    displayonscreen("Connected to MQTT",0,1);
+    // client.publish("test","message");
 
 
     Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
@@ -236,7 +240,7 @@ void setup() {
         Serial.print("Match found! Key: ");
         Serial.println(key);
         matchFound = true;
-        // displayonscreen("Device already registered",0,1);
+        displayonscreen("Device already registered",0,1);
         deviceregistration=true;
         registration_status=true;
         break;
@@ -292,32 +296,33 @@ void setup() {
 }
 
 void loop() {
-   Serial.print("registration_status:  ");
-   Serial.println(registration_status);
-   Serial.print("deviceregistration:   ");
-   Serial.println(deviceregistration);
-   Serial.print("matchFound:   ");
-   Serial.println(matchFound);
-
+   
+  //  Serial.print("registration_status:  ");
+  //  Serial.println(registration_status);
+  //  Serial.print("deviceregistration:   ");
+  //  Serial.println(deviceregistration);
+  //  Serial.print("matchFound:   ");
+  //  Serial.println(matchFound);
+   publish_on_app();
    if (!registration_status)
    {
-    Serial.println("In registration_status condition");
+    // Serial.println("In registration_status condition");
 
     if (!display_screen)
     {
-    Serial.println("In display screen condition");
-    // displayonscreen("mac"+macAddress,0,1);
+    // Serial.println("In display screen condition");
+    displayonscreen("Enter this mac address in Mobile App:  "+macAddress,0,1);
     display_screen=true;
     }
    
-    Serial.println("In registration if condition @@@@@@@@");
+    // Serial.println("In registration if condition @@@@@@@@");
     if (!matchFound and deviceregistration==true) {
     
     doc[result] = macAddress;
     Serial.println("No match found. Added value with key 'new_device'.");
     firebasePath = "/Devices/macaddress/" + result;
     Serial.printf("Set string... %s\n", Firebase.setString(firebaseData, firebasePath, macAddress) ? "ok" : firebaseData.errorReason().c_str());
-    // displayonscreen("Device Registered Successfully",0,1);
+    displayonscreen("Device Registered Successfully",0,1);
     deviceregistration=false;
     registration_status=true;
   }
@@ -792,7 +797,7 @@ void page3() {
   sensors_event_t humidity, temp;
   aht.getEvent(&humidity, &temp);  // populate temp and humidity objects with fresh data
   fahrenheit = temp.temperature * 1.8 + 32;
-  int humid = humidity.relative_humidity;
+  humid = humidity.relative_humidity;
 
   background.pushImage(0, 10, 108, 216, Thermometer);
   background.fillCircle(160, 60, 55, TFT_YELLOW);
@@ -822,12 +827,16 @@ void reconnect() {
   while (!client.connected()) {
     if (client.connect(cbuff)) {
       Serial.println("MQTT Connected");
-      client.subscribe("DEVICEONBOARDING");
-      String topic1,topic2;
-      topic1="DEVICEONBOARDING/"+macAddress;
-      topic2="SETTINGS/"+macAddress;
-      client.subscribe(topic1.c_str());
-      client.subscribe(topic2.c_str());
+      // client.subscribe("DEVICEONBOARDING");
+      // String topic1,topic2;
+      // topic1="DEVICEONBOARDING/"+macAddress;
+      // topic2="SETTINGS/"+macAddress;
+      // client.subscribe(topic1.c_str());
+      // client.subscribe(topic2.c_str());
+      client.subscribe(("DEVICEONBOARDING/" + String(macAddress)).c_str());
+      client.subscribe(("MAXS/" + String(macAddress)).c_str());
+      client.subscribe(("MINS/" + String(macAddress)).c_str());
+
       // client.subscribe("SETTINGS/"+macAddress.c_str());
 
       client.subscribe("set");
@@ -852,7 +861,7 @@ void callback(char* topic, byte* message, unsigned int length)
     Serial.println();
     
   Serial.println("Message received: " + receivedMessage);
-  DynamicJsonDocument doc1(2048);
+  // DynamicJsonDocument doc1(2048);
   DeserializationError error = deserializeJson(doc1, receivedMessage);
 
   if (error) {
@@ -867,23 +876,30 @@ if (String(topic) == "DEVICEONBOARDING/"+macAddress )
    
   
 }
-if (String(topic) == "SETTINGS/"+macAddress) 
+
+if (String(topic) == "MAXS/"+macAddress) 
 {
-  Serial.println("message received on topic: SETTINGS/"+macAddress);
+    Serial.println("message received on topic: MAXS/"+macAddress);
+    MaxS=doc1["maxs"];
+    Serial.print("maxS value is ");
+    Serial.println(MaxS);
+    Serial.println();
+}
+
+
+if (String(topic) == "MINS/"+macAddress) 
+{
+  Serial.println("message received on topic: MINS/"+macAddress);
   int ta;
 
-  MaxS=doc1["maxs"];
+  // MaxS=doc1["maxs"];
   MinS=doc1["mins"];
-  ta=doc1["t"];
-  Serial.print("maxS value is ");
-  Serial.println(MaxS);
-  Serial.println();
   Serial.print("minS value is " );
   Serial.println(MinS);
   Serial.println();
-  Serial.print("t value is ");
-  Serial.println(ta);
-  delay(5000);
+  // Serial.print("t value is ");
+  // Serial.println(ta);
+  // delay(5000);
 }
 
 
@@ -901,3 +917,44 @@ if (String(topic) == "SETTINGS/"+macAddress)
 
 
 // }
+
+void publish_on_app()
+{
+
+  lightPercent=10;
+  moistPercent=20;
+  fahrenheit=21;
+  humid=200;
+  // DynamicJsonDocument doc2(200);
+  doc1["lightpercent"]=lightPercent;
+  doc1["moistpercent"] = moistPercent;
+  doc1["temp_f"] = fahrenheit;
+  doc1["humid"]=humid;
+  doc1["macaddress"]=macAddress;
+  String jsonString,pubtopic;
+  // pubtopic="READINGS/"+macAddress;
+  serializeJson(doc1, jsonString);
+  Serial.println("publish redings on app");
+  // client.publish("READINGS/"+macAddress.c_str(),jsonString.c_str());
+//  client.publish(String("READINGS/") + macAddress, jsonString.c_str());
+
+client.publish(("READINGS/" + String(macAddress)).c_str(), jsonString.c_str());
+
+
+}
+
+void displayonscreen(String comment,int xaxis,int yaxis)
+{
+
+  tft.setTextColor(TFT_BLACK);
+  tft.setFreeFont(FSSBO24);
+  tft.setCursor(xaxis, yaxis);
+  tft.print(comment);
+  delay(2000);
+  tft.fillScreen(TFT_WHITE);
+  // background.drawString(String(humid) + "%", 160, 180);
+
+
+
+
+}
