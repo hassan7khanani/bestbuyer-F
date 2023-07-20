@@ -1,16 +1,17 @@
 
 #include <TFT_eSPI.h>  //Graphics library for display
-#include <SPI.h>
+// #include <SPI.h>
 #include <Adafruit_AHTX0.h>
-#include <Wire.h>
+// #include <Wire.h>
 #include "Free_Fonts.h"
 #include <SPI.h>
 #include <Wire.h>
-#include <WiFi.h>
+// #include <WiFi.h>
 #include <WiFiManager.h> 
 #include <FirebaseESP32.h>
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
+#include <Ticker.h>
 //TFT Declarations
 
 TFT_eSPI tft = TFT_eSPI();                   //tft
@@ -88,9 +89,17 @@ FirebaseJson json;
 unsigned long currentTime = millis();  //Reads current time
 unsigned long prevTime = 0;            //Previous time button was pressed
 
+Ticker timer;
+Ticker timer1;
+bool publishFlag = false;
+bool mqttflag = false;
+bool pollflag=false;
+
+
 // unsigned long currentTime;
 // int lastCount;
-
+void publishCallback();
+void mqttCallback();
 void publish_on_app();
 void reconnect();
 // void displayonscreen(String comment,int xaxis,int yaxis);
@@ -214,7 +223,8 @@ void setup() {
     displayonscreen("Connected to MQTT",0,1);
     // client.publish("test","message");
 
-
+    timer.attach(600, publishCallback); // 600 seconds = 10 minutes
+    timer1.attach(60, mqttCallback);
     Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
     Serial.printf("Get string... %s\n", Firebase.getString(firebaseData, F("/Devices/macaddress/")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str());
     jsonData=Firebase.getString(firebaseData, F("/Devices/macaddress")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str();
@@ -303,7 +313,7 @@ void loop() {
   //  Serial.println(deviceregistration);
   //  Serial.print("matchFound:   ");
   //  Serial.println(matchFound);
-   publish_on_app();
+  //  publish_on_app();
    if (!registration_status)
    {
     // Serial.println("In registration_status condition");
@@ -329,6 +339,18 @@ void loop() {
 
    }
 
+  //     if (publishFlag)
+  // {
+  //   publishMessage();
+  //   Serial.println("============================Published on aws =====================");
+  //   publishFlag = false; // Reset the flag
+  // }
+      if (mqttflag)
+  {
+    publish_on_app();
+    Serial.println("============================Published on mqtt =====================");
+    mqttflag = false; // Reset the flag
+  }
 
   if (!client.connected()) {
     reconnect();
@@ -373,7 +395,15 @@ void loop() {
 
   background.pushSprite(0,0);
 }
+void publishCallback()
+{
+  publishFlag = true;
+}
 
+ void mqttCallback()
+ {
+  mqttflag = true;
+ }
 void publishreadings()
 {
  Serial.println("sending data");
@@ -836,6 +866,8 @@ void reconnect() {
       client.subscribe(("DEVICEONBOARDING/" + String(macAddress)).c_str());
       client.subscribe(("MAXS/" + String(macAddress)).c_str());
       client.subscribe(("MINS/" + String(macAddress)).c_str());
+      client.subscribe(("POLL/" + String(macAddress)).c_str());
+
 
       // client.subscribe("SETTINGS/"+macAddress.c_str());
 
@@ -876,6 +908,19 @@ if (String(topic) == "DEVICEONBOARDING/"+macAddress )
    
   
 }
+if (String(topic) == "POLL/"+macAddress ) 
+{
+   Serial.println("message received on topic: POLL/"+macAddress);
+   String payload = "{\"status\":\"true\"}";
+   if(!pollflag)
+   {
+   client.publish(("POLL/" + String(macAddress)).c_str(),payload.c_str());
+   pollflag=true;
+   }
+   
+  
+}
+
 
 if (String(topic) == "MAXS/"+macAddress) 
 {
