@@ -110,6 +110,10 @@ bool publishFlag = false;
 bool mqttflag = false;
 bool pollflag=false;
 
+//For notifications
+HTTPClient http;
+String apiURL = "https://fcm.googleapis.com/fcm/send";
+String authorizationKey = "AAAA3bW1CnU:APA91bE_MYJxx3KzfnH-OIpHWfDv0ZTBAyrm3H-X-EQysVkwuLhfB53wh3q2L2nw0TFh-NcsT4iNIPw3dVGLApKdg5QZPB3X5tE3nmIXTHi-Utd2AoiQ2sARq1ykIgiVKb22bsZvNgZo";
 
 // Functions 
 void connectAWS();
@@ -164,7 +168,7 @@ int tooWet = 80;  //Value that the soil becomes to wet
 
 int moistPercent;  //Percentage of moister in soil 0-100%
 int prevMoistPercent;
-
+int bestMoistureLevel,bestLightValue;
 unsigned long prevSoilRead = 0;  //Previous time of soil read
 int waitSoil = 5;                //Time between soil readings to debounce
 int moisture;                    //Holds mapping value 0-8
@@ -192,8 +196,9 @@ unsigned long prevlightRead = 0;  //Previous time of light read
 int waitlight = 5;                //Time between light lightReadings to debounce
 int light,i=0;                        //Holds mapping value 0-8
 
-const unsigned long captureDuration = 3000;
-unsigned long startTime = 0;
+// const unsigned long captureDuration = 3000;
+// unsigned long startTime = 0;
+bool isBelow20 = false;
 ////////////////////////
 //TEMP/HUMIDITY SENSOR//
 ////////////////////////
@@ -206,11 +211,11 @@ void setup() {
   // put your setup code here, to run once:
 
   Serial.begin(115200);
-    WiFiManager wm;
-    bool res;
-    displayonscreen("Connecting to Wifi",0,1);
+  WiFiManager wm;
+  bool res;
+  displayonscreen("Connecting to Wifi",0,1);
 
-    res = wm.autoConnect("SproutSitter"); // password protected ap
+  res = wm.autoConnect("SproutSitter"); // password protected ap
     if(!res) {
         Serial.println("Failed to connect");
         // ESP.restart();
@@ -228,6 +233,11 @@ void setup() {
     macAddress = WiFi.macAddress();
     result=a+macAddress.substring(0,10);
 
+    http.begin(apiURL);
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", "key=" + authorizationKey);
+
+
     displayonscreen("Connecting to MQTT",0,1);
     Serial.println("Connecting to MQTT");
     client.setServer(mqtt_server, 1883);
@@ -238,7 +248,11 @@ void setup() {
 
     timer.attach(60, publishCallback); // 600 seconds = 10 minutes
     timer1.attach(5, mqttCallback);
+    
+    //connect to Firebase
     Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
+    
+    //get refistered macaddress
     Serial.printf("Get string... %s\n", Firebase.getString(firebaseData, F("/Devices/macaddress/")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str());
     jsonData=Firebase.getString(firebaseData, F("/Devices/macaddress")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str();
     DeserializationError error = deserializeJson(doc, jsonData);
@@ -268,20 +282,15 @@ void setup() {
         registration_status=true;
         break;
         }
-        // String modifiedJsonData;
-        // serializeJson(doc, modifiedJsonData);
-        // Serial.println("Modified JSON data:");
-        // Serial.println(modifiedJsonData);
 
     }
-  notifications("esp32","helloworld");
+      notifications("Plant needs water","Alert!");
 
-  aht.begin();
   //  TFT display set up
-
-  tft.init();
-  tft.setRotation(1);
-  tft.fillScreen(TFT_WHITE);
+  // aht.begin();
+  // tft.init();
+  // tft.setRotation(1);
+  // tft.fillScreen(TFT_WHITE);
 
   //Background sprite setup, main sprite
   background.setColorDepth(8);
@@ -317,30 +326,28 @@ void setup() {
     readings[thisReading] = 0;
   }
 
-
-
 }
 
 void loop() {
-   
+
+  //  Serial.println("hello");
+  //  Serial.print("registration_status  ");
+  //  Serial.println(registration_status);
+
    if (!registration_status)
    {
-    // Serial.println("In registration_status condition");
-
+   
     if (!display_screen)
     {
-    // Serial.println("In display screen condition");
     displayonscreen("Enter this mac address in Mobile App:  "+macAddress,0,1);
     display_screen=true;
     }
    
-    // Serial.println("In registration if condition @@@@@@@@");
     if (!matchFound and deviceregistration==true) {
     
     doc[result] = macAddress;
     Serial.println("No match found. Added value with key 'new_device'.");
     firebasePath = "/Devices/macaddress/" + result;
-    // Serial.printf("Set string... %s\n", Firebase.setString(firebaseData, firebasePath, macAddress) ? "ok" : firebaseData.errorReason().c_str());
     displayonscreen("Device Registered Successfully",0,1);
     deviceregistration=false;
     registration_status=true;
@@ -348,18 +355,31 @@ void loop() {
 
    }
 
-      if (publishFlag)
+      if (publishFlag && registration_status==true)
   {
     publishMessage();
     Serial.println("============================Published on aws =====================");
     publishFlag = false; // Reset the flag
   }
-      if (mqttflag)
+      if (mqttflag && registration_status==true )
   {
     publish_on_app();
     Serial.println("============================Published on mqtt =====================");
     mqttflag = false; // Reset the flag
   }
+
+  moistPercent=18;
+
+  //send notification only one time if moistPercent goes below 20 
+  if (moistPercent<20 && !isBelow20  && registration_status==true )
+  {
+  notifications("Plant needs water","Alert!");
+  isBelow20 = true;
+  }
+  else if (moistPercent >= 20 && isBelow20) {
+    isBelow20 = false;
+  }
+
 
   if (!client.connected()) {
     reconnect();
@@ -370,9 +390,6 @@ void loop() {
     connectAWS();
   }
   client1.loop();
-  // publishMessage();
-  // client1.loop();
-  // delay(2000);
 
   static int lastCount;
   static String page = "Page One";
@@ -866,12 +883,13 @@ void page4() {
   background.pushImage(10, 10, 220, 220, Sun);
   background.drawString(String(lightPercent) + "%", 120, 120);
 }
+
+//function to reconnect MQTT if disconnected
 void reconnect() {
- 
+
   madd = macAddress;
   char cbuff[madd.length() + 1]; //Finds length of string to make a buffer
   madd.toCharArray(cbuff, madd.length() + 1); 
-
 
   while (!client.connected()) {
     if (client.connect(cbuff)) {
@@ -882,16 +900,18 @@ void reconnect() {
       client.subscribe(("MINS/" + String(macAddress)).c_str());
       client.subscribe(("POLL/" + String(macAddress)).c_str());
       client.subscribe(("POLL1/" + String(macAddress)).c_str());
+      client.subscribe(("BESTMOIST/" + String(macAddress)).c_str());
+      client.subscribe(("BESTLIGHT/" + String(macAddress)).c_str());
     } else {
       Serial.print("failed to connect with MQTT with state ");
+      Serial.println(client.state());
       displayonscreen("Failed to connect with MQTT",0,1);
-      Serial.print(client.state());
       delay(5000);
     }
   }
 }
 
-
+// callback function to receive the MQTT messages
 void callback(char* topic, byte* message, unsigned int length) 
 {
   Serial.print("Message received on topic: ");
@@ -915,9 +935,9 @@ if (String(topic) == "DEVICEONBOARDING/"+macAddress )
 {
    Serial.println("message received on topic: DEVICEONBOARDING/"+macAddress);
    deviceregistration=doc1["registered"];
-   
   
 }
+
 if (String(topic) == "POLL/"+macAddress ) 
 {
    Serial.println("message received on topic: POLL/"+macAddress);
@@ -927,9 +947,35 @@ if (String(topic) == "POLL/"+macAddress )
    client.publish(("POLL1/" + String(macAddress)).c_str(),payload.c_str());
    pollflag=true;
    }
-   
-  
+    
 }
+
+if (String(topic) == "BESTMOIST/"+macAddress ) 
+{
+   Serial.println("message received on topic: BESTMOIST/"+macAddress);
+   bestMoistureLevel=doc1["bestmoist"];
+    
+}
+if (String(topic) == "BESTLIGHT/"+macAddress ) 
+{
+   Serial.println("message received on topic: BESTLIGHT/"+macAddress);
+   bestLightValue=doc1["bestlight"];
+    
+}
+
+if (String(topic) == "POLL/"+macAddress ) 
+{
+   Serial.println("message received on topic: POLL/"+macAddress);
+   String payload = "{\"status\":\"true\"}";
+   if(!pollflag)
+   {
+   client.publish(("POLL1/" + String(macAddress)).c_str(),payload.c_str());
+   pollflag=true;
+   }
+    
+}
+
+
 
 
 if (String(topic) == "MAXS/"+macAddress) 
@@ -945,7 +991,6 @@ if (String(topic) == "MAXS/"+macAddress)
 if (String(topic) == "MINS/"+macAddress) 
 {
   Serial.println("message received on topic: MINS/"+macAddress);
-  int ta;
 
   // MaxS=doc1["maxs"];
   MinS=doc1["mins"];
@@ -960,6 +1005,7 @@ if (String(topic) == "MINS/"+macAddress)
 
 }
 
+// function to publish readings to the Mobile APP on MQTT Topic
 void publish_on_app()
 {
 
@@ -979,6 +1025,7 @@ void publish_on_app()
   client.publish(("READINGS/" + String(macAddress)).c_str(), jsonString.c_str());
 }
 
+// function to display text on scrreen
 void displayonscreen(String comment,int xaxis,int yaxis)
 {
   tft.fillScreen(TFT_WHITE);
@@ -989,6 +1036,7 @@ void displayonscreen(String comment,int xaxis,int yaxis)
   // delay(2000);
 }
 
+//function to connect with AWS
 void connectAWS()
 {
   // Configure WiFiClientSecure to use the AWS IoT device credentials
@@ -1019,6 +1067,7 @@ void connectAWS()
   displayonscreen("AWS IoT Connected!",0,1);
 }
 
+//function to publish message to AWS
 void publishMessage()
 { 
   // lightPercent=10;
@@ -1041,18 +1090,16 @@ void messageHandler(char* topic, byte* payload, unsigned int length)
 
 }
 
-void notifications(String notificationbody,String notificationtitle)
- {
-  HTTPClient http;
-  String apiURL = "https://fcm.googleapis.com/fcm/send";
-  String authorizationKey = "AAAA3bW1CnU:APA91bE_MYJxx3KzfnH-OIpHWfDv0ZTBAyrm3H-X-EQysVkwuLhfB53wh3q2L2nw0TFh-NcsT4iNIPw3dVGLApKdg5QZPB3X5tE3nmIXTHi-Utd2AoiQ2sARq1ykIgiVKb22bsZvNgZo";
-
-  http.begin(apiURL);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("Authorization", "key=" + authorizationKey);
+//function to send notifications to mobile App 
+void notifications(String notificationbody,String notificationtitle) {
+  
+  Serial.println("In notification function");
   String jsonData1;
+
+  //Get the devicetoken from the Firebase based on the macAddress
   jsonData1 = Firebase.getString(firebaseData, F("/DevicesTokens")) ? firebaseData.to<const char *>() : firebaseData.errorReason().c_str();
   DeserializationError error1 = deserializeJson(notification, jsonData1);
+  Serial.println("JSON STRING     "+jsonData1 );
 
   if (error1) {
     Serial.print("JSON parsing failed: ");
@@ -1061,16 +1108,16 @@ void notifications(String notificationbody,String notificationtitle)
   }
 
   for (JsonPair kv : notification.as<JsonObject>()) {
-    String key = kv.key().c_str();
-    String value = kv.value().as<String>();
+    String key1 = kv.key().c_str();
+    String value1 = kv.value().as<String>();
 
     Serial.print("Key: ");
-    Serial.print(key);
+    Serial.print(key1);
     Serial.print(" Value: ");
-    Serial.println(value);
+    Serial.println(value1);
 
-    if (key == macAddress) {
-      devicetoken = value;
+    if (key1 == macAddress) {
+      devicetoken = value1;
       Serial.println("Device token is: " + devicetoken);
       break; // Once we find the device token, we can stop the loop
     }
@@ -1091,7 +1138,11 @@ void notifications(String notificationbody,String notificationtitle)
   Serial.println();
 
   int httpCode = http.POST(body);
+  Serial.println();
+  Serial.println("**********http code is*********** " + String(httpCode));
+  Serial.println();
 
+  // Check the http status code
   if (httpCode > 0) {
     String response = http.getString();
     Serial.println("HTTP response code: " + String(httpCode));
@@ -1100,5 +1151,6 @@ void notifications(String notificationbody,String notificationtitle)
     Serial.println("Error on HTTP request");
   }
 
-  http.end();
+  // http.end();
 }
+
